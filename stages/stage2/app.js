@@ -25,6 +25,28 @@ let pointer = null;
 let lastDialogue = 'start';
 let revision = 0;
 let endingTimer;
+let completionTimer;
+let completionOpen = false;
+const savedTabIndexes = new Map();
+
+function setCompletion(open) {
+  completionOpen = open;
+  hide($('#completion'), !open);
+  if (open) {
+    for (const control of svg.querySelectorAll('[role="button"]')) {
+      if (control.closest('#completion')) continue;
+      savedTabIndexes.set(control, control.getAttribute('tabindex'));
+      control.setAttribute('tabindex', '-1');
+    }
+    $('#completion-next').focus();
+  } else {
+    for (const [control, value] of savedTabIndexes) {
+      if (value === null) control.removeAttribute('tabindex');
+      else control.setAttribute('tabindex', value);
+    }
+    savedTabIndexes.clear();
+  }
+}
 
 function svgPoint(clientX, clientY) {
   return new DOMPoint(clientX, clientY).matrixTransform(svg.getScreenCTM().inverse());
@@ -82,6 +104,8 @@ function showDialogue(id, animate = false) {
 function render(placedId = null) {
   const version = ++revision;
   clearTimeout(endingTimer);
+  clearTimeout(completionTimer);
+  setCompletion(false);
   stopMotion($('#placed-items'));
   $('#board-textures').replaceChildren();
   $('#placed-items').replaceChildren();
@@ -116,12 +140,23 @@ function render(placedId = null) {
     if (isComplete(state)) {
       // Let the final piece's line be read before the original ending line.
       endingTimer = setTimeout(() => {
-        if (version === revision && isComplete(state)) showDialogue('finish', true);
+        if (version !== revision || !isComplete(state)) return;
+        showDialogue('finish', true);
+        // Give the ending line three seconds before showing the source card.
+        completionTimer = setTimeout(() => {
+          if (version === revision && isComplete(state)) setCompletion(true);
+        }, 3000);
       }, 1800);
     }
   } else if (lastDialogue === 'finish' && !isComplete(state)) showDialogue('start');
 }
 function activate(target, point) {
+  if (target.closest('#completion-next')) {
+    setCompletion(false);
+    $('#reset').focus();
+    return;
+  }
+  if (completionOpen) return;
   if (target.closest('#reset')) {
     state = createState();
     showDialogue('start');
@@ -153,13 +188,24 @@ svg.addEventListener('click', event => {
 window.addEventListener('pointermove', trackPointer);
 window.addEventListener('resize', positionHeld);
 document.addEventListener('contextmenu', event => {
-  if (!state.held) return;
+  if (!state.held || completionOpen) return;
   event.preventDefault();
   trackPointer(event);
   state = rotateHeld(state);
   render();
 });
 svg.addEventListener('keydown', event => {
+  if (completionOpen && event.key === 'Tab') {
+    event.preventDefault();
+    $('#completion-next').focus();
+    return;
+  }
+  if (completionOpen && event.key === 'Escape') {
+    event.preventDefault();
+    setCompletion(false);
+    $('#reset').focus();
+    return;
+  }
   if (event.key === 'Escape' && state.held) {
     event.preventDefault(); state = returnHeld(state); render(); return;
   }
